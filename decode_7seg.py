@@ -49,13 +49,14 @@ def decode_digit(digit_roi):
     h_half, w_half = h // 2, w // 2
     h_qtr = h // 4
 
+    inset = 2
     segment_patches = [
         (ph//2, w_half - pw//2, ph, pw),
-        (h_qtr, w - pw, ph, pw),
-        (h_half + h_qtr, w - pw, ph, pw),
+        (h_qtr, w - pw - inset, ph, pw),
+        (h_half + h_qtr, w - pw - inset, ph, pw),
         (h - ph - ph//2, w_half - pw//2, ph, pw),
-        (h_half + h_qtr, 0, ph, pw),
-        (h_qtr, 0, ph, pw),
+        (h_half + h_qtr, inset, ph, pw),
+        (h_qtr, inset, ph, pw),
         (h_half - ph//2, w_half - pw//2, ph, pw)
     ]
 
@@ -66,7 +67,7 @@ def decode_digit(digit_roi):
             segments.append(0)
             continue
         patch = digit_roi[y:y+patch_h, x:x+patch_w]
-        if cv2.countNonZero(patch) / (patch_h * patch_w) > 0.4:
+        if cv2.countNonZero(patch) / (patch_h * patch_w) > 0.5:
             segments.append(1)
         else:
             segments.append(0)
@@ -75,20 +76,15 @@ def decode_digit(digit_roi):
 def process_digit_contours(contours, base_image, std_w, std_h):
     if not contours:
         return '?'
-
     all_points = np.concatenate(contours)
     if cv2.contourArea(all_points) < 50:
         return '?'
-
     rect = cv2.minAreaRect(all_points)
     box = cv2.boxPoints(rect)
-
     src_pts = order_points(box)
     dst_pts = np.array([[0, 0], [std_w - 1, 0], [std_w - 1, std_h - 1], [0, std_h - 1]], dtype="float32")
-
     M = cv2.getPerspectiveTransform(src_pts, dst_pts)
     warped = cv2.warpPerspective(base_image, M, (std_w, std_h))
-
     return decode_digit(warped)
 
 def main(video_path):
@@ -121,9 +117,7 @@ def main(video_path):
         thresh = cv2.dilate(thresh, kernel, iterations=1)
 
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        if not contours:
-            continue
+        if not contours: continue
 
         all_cnts = np.concatenate(contours)
         x_all, y_all, w_all, h_all = cv2.boundingRect(all_cnts)
@@ -131,7 +125,6 @@ def main(video_path):
 
         digit1_contours = []
         digit2_contours = []
-
         for cnt in contours:
             if cv2.contourArea(cnt) < 20: continue
             x, y, wc, hc = cv2.boundingRect(cnt)
@@ -142,10 +135,10 @@ def main(video_path):
 
         d1 = process_digit_contours(digit1_contours, thresh, STD_W, STD_H)
         d2 = process_digit_contours(digit2_contours, thresh, STD_W, STD_H)
-
         current_val = f"{d1}{d2}"
-        if current_val != last_printed and "???" not in current_val:
-             if '?' not in current_val:
+
+        if current_val != last_printed:
+            if '?' not in current_val:
                 print(current_val)
                 last_printed = current_val
 
