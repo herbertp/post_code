@@ -9,8 +9,8 @@ def main(video_path):
         print(f"Error: Could not open video {video_path}")
         return
 
-    # --- Step 1: Analyze first N frames to find stable bounding box ---
-    N_FRAMES_FOR_BOX = 10
+    # --- Step 1: Analyze first N frames to find a single, stable bounding box ---
+    N_FRAMES_FOR_BOX = 100
     frame_count = 0
     union_box = None
 
@@ -40,14 +40,14 @@ def main(video_path):
                     union_box[3] = max(union_box[3], y + h_box)
 
     if union_box is None:
-        print("Error: Could not find display in the first frames.")
+        print("Error: Could not find display in the first 100 frames.")
         return
 
     x_master, y_master = union_box[0], union_box[1]
     w_master = union_box[2] - union_box[0]
     h_master = union_box[3] - union_box[1]
 
-    # --- Step 2: Define fixed sample points with corrected coordinates ---
+    # --- Step 2: Define fixed sample points based on the stable master box ---
     DIGITS_LOOKUP = {
         (1, 1, 1, 1, 1, 1, 0): '0', (0, 1, 1, 0, 0, 0, 0): '1',
         (1, 1, 0, 1, 1, 0, 1): '2', (1, 1, 1, 1, 0, 0, 1): '3',
@@ -62,19 +62,13 @@ def main(video_path):
     single_digit_w = w_master / 2
     y_top = h_master * 0.20; y_mid = h_master * 0.5; y_bot = h_master * 0.80
 
-    # Corrected x-coordinates to be near the edges for vertical segments
-    x_left_edge = single_digit_w * 0.10
-    x_right_edge = single_digit_w * 0.90
+    x_left_edge = single_digit_w * 0.15
+    x_right_edge = single_digit_w * 0.85
     x_mid = single_digit_w * 0.5
 
     single_digit_segment_centers = [
-        (y_top, x_mid),       # a
-        (y_top, x_right_edge),# b
-        (y_bot, x_right_edge),# c
-        (y_bot, x_mid),       # d
-        (y_bot, x_left_edge), # e
-        (y_top, x_left_edge), # f
-        (y_mid, x_mid)        # g
+        (y_top, x_mid), (y_top, x_right_edge), (y_bot, x_right_edge), (y_bot, x_mid),
+        (y_bot, x_left_edge), (y_top, x_left_edge), (y_mid, x_mid)
     ]
 
     sample_points = []
@@ -83,11 +77,9 @@ def main(video_path):
     for y, x in single_digit_segment_centers:
         sample_points.append((int(y), int(x + single_digit_w)))
 
-    # --- Step 3: Process all frames ---
+    # --- Step 3: Process all frames using the fixed points and a fixed brightness threshold ---
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     last_printed = ""
-    last_val = ""
-    stable_count = 0
 
     while cap.isOpened():
         ret, frame = cap.read()
@@ -100,12 +92,11 @@ def main(video_path):
         if digit_area.size == 0: continue
         gray_digits = cv2.cvtColor(digit_area, cv2.COLOR_BGR2GRAY)
 
-        frame_thresh, _ = cv2.threshold(gray_digits, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
         segments = []
         for y, x in sample_points:
             if y < gray_digits.shape[0] and x < gray_digits.shape[1]:
-                if gray_digits[y, x] > frame_thresh:
+                # Use a fixed brightness threshold
+                if gray_digits[y, x] > 100:
                     segments.append(1)
                 else:
                     segments.append(0)
@@ -118,17 +109,9 @@ def main(video_path):
         d2 = DIGITS_LOOKUP.get(digit2_segs, '?')
 
         current_val = f"{d1}{d2}"
-
-        if current_val == last_val:
-            stable_count += 1
-        else:
-            last_val = current_val
-            stable_count = 1
-
-        if stable_count >= 2 and '?' not in current_val:
-            if current_val != last_printed:
-                print(current_val)
-                last_printed = current_val
+        if current_val != last_printed and '?' not in current_val:
+            print(current_val)
+            last_printed = current_val
 
     cap.release()
 
