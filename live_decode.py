@@ -15,8 +15,7 @@ def set_camera_properties_v4l2(device_index, settings):
         try:
             key, value = setting.split('=', 1)
             command_parts.append(f"-c {key}={value}")
-        except ValueError:
-            print(f"Warning: Invalid format for setting '{setting}'. Use key=value.")
+        except ValueError: print(f"Warning: Invalid format for setting '{setting}'. Use key=value.")
     command = " ".join(command_parts)
     print(f"Executing: {command}")
     os.system(command)
@@ -50,6 +49,25 @@ def get_segment_centroids(roi_for_calib):
     if ordered_left is None or ordered_right is None: return None
     return ordered_left + ordered_right
 
+def auto_calibrate(cap, search_limit=150):
+    print(f"Attempting auto-calibration by searching for '88' in the first {search_limit} frames...")
+    frame_count = 0
+    while frame_count < search_limit:
+        ret, frame = cap.read()
+        if not ret: return None, None
+        frame_count += 1
+        h, w, _ = frame.shape
+        roi = frame[h//3:2*h//3, w//3:2*w//3]
+        points = get_segment_centroids(roi)
+        if points:
+            print(f"Auto-calibration successful on frame #{frame_count}.")
+            all_points_np = np.array([[x,y] for y,x in points])
+            x_m, y_m, w_m, h_m = cv2.boundingRect(all_points_np)
+            roi_box = (x_m, y_m, w_m, h_m)
+            return roi_box, points
+    print("Auto-calibration failed.")
+    return None, None
+
 def main(args):
     if isinstance(args.source, int) and args.set_ctrl:
         set_camera_properties_v4l2(args.source, args.set_ctrl)
@@ -60,6 +78,17 @@ def main(args):
 
     state = 'AWAITING_CALIBRATION'
     roi_box, sample_points = None, None
+
+    # --- Smart Auto-calibration for non-visual file processing ---
+    is_file = isinstance(args.source, str)
+    if is_file and not args.visualize:
+        roi_box, sample_points = auto_calibrate(cap)
+        if roi_box:
+            state = 'DECODING'
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # Rewind after calibration
+        else:
+            print("Could not auto-calibrate from file. Exiting."); return
+
     DIGITS_LOOKUP = {
         (1,1,1,1,1,1,0):'0', (0,1,1,0,0,0,0):'1', (1,1,0,1,1,0,1):'2', (1,1,1,1,0,0,1):'3',
         (0,1,1,0,0,1,1):'4', (1,0,1,1,0,1,1):'5', (1,0,1,1,1,1,1):'6', (1,1,1,0,0,0,0):'7',
@@ -69,7 +98,7 @@ def main(args):
     frame_idx, last_val = 0, ""
     fps_buffer = deque(maxlen=30)
 
-    print("Starting decoder. Press 'c' to calibrate, 'q' to quit.")
+    print("Starting decoder. In interactive mode, press 'c' to calibrate, 'q' to quit.")
 
     while True:
         start_time = time.time()
@@ -140,7 +169,7 @@ if __name__ == "__main__":
     parser.add_argument("-x", "--xpos", type=float, default=1/3, help="ROI top-left X position as a fraction of frame width (default: 1/3).")
     parser.add_argument("-y", "--ypos", type=float, default=1/3, help="ROI top-left Y position as a fraction of frame height (default: 1/3).")
     parser.add_argument("-w", "--width", type=float, default=1/3, help="ROI width as a fraction of frame width (default: 1/3).")
-    parser.add_argument("-h", "--height", type=float, default=1/3, help="ROI height as a fraction of frame height (default: 1/3).")
+    parser.add_argument("--height", type=float, default=1/3, help="ROI height as a fraction of frame height (default: 1/3).")
     args = parser.parse_args()
     try: args.source = int(args.source)
     except ValueError: pass
