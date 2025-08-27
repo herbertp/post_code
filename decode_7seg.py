@@ -22,8 +22,8 @@ def main(video_path):
         (0, 1, 1, 0, 0, 1, 1): '4', (1, 0, 1, 1, 0, 1, 1): '5',
         (1, 0, 1, 1, 1, 1, 1): '6', (1, 1, 1, 0, 0, 0, 0): '7',
         (1, 1, 1, 1, 1, 1, 1): '8', (1, 1, 1, 1, 0, 1, 1): '9',
-        (1, 1, 1, 0, 1, 1, 1): 'A', (0, 0, 1, 1, 1, 1, 1): 'b',
-        (1, 0, 0, 1, 1, 1, 0): 'C', (0, 1, 1, 1, 1, 0, 1): 'd',
+        (1, 1, 1, 0, 1, 1, 1): 'A', (0, 0, 1, 1, 1, 1, 1): 'B', # Changed to uppercase
+        (1, 0, 0, 1, 1, 1, 0): 'C', (0, 1, 1, 1, 1, 0, 1): 'D', # Changed to uppercase
         (1, 0, 0, 1, 1, 1, 1): 'E', (1, 0, 0, 0, 1, 1, 1): 'F'
     }
 
@@ -37,7 +37,6 @@ def main(video_path):
         roi = frame[h//3:2*h//3, w//3:2*w//3]
         gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
 
-        # Use an adaptive threshold on the ROI to handle brightness changes
         frame_thresh, _ = cv2.threshold(gray_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
         segments = []
