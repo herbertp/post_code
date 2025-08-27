@@ -3,150 +3,120 @@ import numpy as np
 import sys
 import time
 
-# Standard 7-segment mapping (a, b, c, d, e, f, g)
-#   a
-# f   b
-#   g
-# e   c
-#   d
-DIGITS_LOOKUP = {
-    # a, b, c, d, e, f, g
-    (1, 1, 1, 1, 1, 1, 0): '0',
-    (0, 1, 1, 0, 0, 0, 0): '1',
-    (1, 1, 0, 1, 1, 0, 1): '2',
-    (1, 1, 1, 1, 0, 0, 1): '3',
-    (0, 1, 1, 0, 0, 1, 1): '4',
-    (1, 0, 1, 1, 0, 1, 1): '5',
-    (1, 0, 1, 1, 1, 1, 1): '6',
-    (1, 1, 1, 0, 0, 0, 0): '7',
-    (1, 1, 1, 1, 1, 1, 1): '8',
-    (1, 1, 1, 1, 0, 1, 1): '9',
-    (1, 1, 1, 0, 1, 1, 1): 'A',
-    (0, 0, 1, 1, 1, 1, 1): 'b',
-    (1, 0, 0, 1, 1, 1, 0): 'C',
-    (0, 1, 1, 1, 1, 0, 1): 'd',
-    (1, 0, 0, 1, 1, 1, 1): 'E',
-    (1, 0, 0, 0, 1, 1, 1): 'F'
-}
-
-def order_points(pts):
-    rect = np.zeros((4, 2), dtype="float32")
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]
-    rect[2] = pts[np.argmax(s)]
-    diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]
-    rect[3] = pts[np.argmax(diff)]
-    return rect
-
-def decode_digit(digit_roi):
-    h, w = digit_roi.shape
-    if h < 10 or w < 5:
-        return '?'
-
-    ph = max(1, h // 6)
-    pw = max(1, w // 4)
-    h_half, w_half = h // 2, w // 2
-    h_qtr = h // 4
-
-    inset = 2
-    segment_patches = [
-        (ph//2, w_half - pw//2, ph, pw),
-        (h_qtr, w - pw - inset, ph, pw),
-        (h_half + h_qtr, w - pw - inset, ph, pw),
-        (h - ph - ph//2, w_half - pw//2, ph, pw),
-        (h_half + h_qtr, inset, ph, pw),
-        (h_qtr, inset, ph, pw),
-        (h_half - ph//2, w_half - pw//2, ph, pw)
-    ]
-
-    segments = []
-    for y, x, patch_h, patch_w in segment_patches:
-        y, x, patch_h, patch_w = int(y), int(x), int(patch_h), int(patch_w)
-        if y + patch_h >= h or x + patch_w >= w or y < 0 or x < 0:
-            segments.append(0)
-            continue
-        patch = digit_roi[y:y+patch_h, x:x+patch_w]
-        if cv2.countNonZero(patch) / (patch_h * patch_w) > 0.5:
-            segments.append(1)
-        else:
-            segments.append(0)
-    return DIGITS_LOOKUP.get(tuple(segments), '?')
-
-def process_digit_contours(contours, base_image, std_w, std_h):
-    if not contours:
-        return '?'
-    all_points = np.concatenate(contours)
-    if cv2.contourArea(all_points) < 50:
-        return '?'
-    rect = cv2.minAreaRect(all_points)
-    box = cv2.boxPoints(rect)
-    src_pts = order_points(box)
-    dst_pts = np.array([[0, 0], [std_w - 1, 0], [std_w - 1, std_h - 1], [0, std_h - 1]], dtype="float32")
-    M = cv2.getPerspectiveTransform(src_pts, dst_pts)
-    warped = cv2.warpPerspective(base_image, M, (std_w, std_h))
-    return decode_digit(warped)
-
 def main(video_path):
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"Error: Could not open video {video_path}")
         return
 
-    STD_W, STD_H = 50, 100
+    # --- Step 1: Analyze first N frames to find stable bounding box ---
+    N_FRAMES_FOR_BOX = 100
+    frame_count = 0
+    union_box = None
+
+    while cap.isOpened() and frame_count < N_FRAMES_FOR_BOX:
+        ret, frame = cap.read()
+        if not ret: break
+        frame_count += 1
+
+        h, w, _ = frame.shape
+        roi = frame[h//3:2*h//3, w//3:2*w//3]
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
+
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        if contours:
+            all_points = np.concatenate(contours)
+            x, y, w_box, h_box = cv2.boundingRect(all_points)
+
+            if w_box > 0 and h_box > 0:
+                if union_box is None:
+                    union_box = [x, y, x + w_box, y + h_box]
+                else:
+                    union_box[0] = min(union_box[0], x)
+                    union_box[1] = min(union_box[1], y)
+                    union_box[2] = max(union_box[2], x + w_box)
+                    union_box[3] = max(union_box[3], y + h_box)
+
+    if union_box is None:
+        print("Could not find display in the first frames.")
+        return
+
+    x_master, y_master = union_box[0], union_box[1]
+    w_master = union_box[2] - union_box[0]
+    h_master = union_box[3] - union_box[1]
+
+    # --- Step 2: Define fixed sample points ---
+    DIGITS_LOOKUP = {
+        (1, 1, 1, 1, 1, 1, 0): '0', (0, 1, 1, 0, 0, 0, 0): '1',
+        (1, 1, 0, 1, 1, 0, 1): '2', (1, 1, 1, 1, 0, 0, 1): '3',
+        (0, 1, 1, 0, 0, 1, 1): '4', (1, 0, 1, 1, 0, 1, 1): '5',
+        (1, 0, 1, 1, 1, 1, 1): '6', (1, 1, 1, 0, 0, 0, 0): '7',
+        (1, 1, 1, 1, 1, 1, 1): '8', (1, 1, 1, 1, 0, 1, 1): '9',
+        (1, 1, 1, 0, 1, 1, 1): 'A', (0, 0, 1, 1, 1, 1, 1): 'b',
+        (1, 0, 0, 1, 1, 1, 0): 'C', (0, 1, 1, 1, 1, 0, 1): 'd',
+        (1, 0, 0, 1, 1, 1, 1): 'E', (1, 0, 0, 0, 1, 1, 1): 'F'
+    }
+
+    single_digit_w = w_master / 2
+    y_top = h_master * 0.20; y_mid = h_master * 0.5; y_bot = h_master * 0.80
+    x_left = single_digit_w * 0.25; x_mid = single_digit_w * 0.5; x_right = single_digit_w * 0.75
+
+    single_digit_segment_centers = [
+        (y_top, x_mid), (y_top, x_right), (y_bot, x_right), (y_bot, x_mid),
+        (y_bot, x_left), (y_top, x_left), (y_mid, x_mid)
+    ]
+
+    sample_points = []
+    for y, x in single_digit_segment_centers:
+        sample_points.append((int(y), int(x)))
+    for y, x in single_digit_segment_centers:
+        sample_points.append((int(y), int(x + single_digit_w)))
+
+    # --- Step 3: Process all frames ---
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     last_printed = ""
 
     while cap.isOpened():
         ret, frame = cap.read()
-        if not ret:
-            break
+        if not ret: break
 
         h, w, _ = frame.shape
         roi = frame[h//3:2*h//3, w//3:2*w//3]
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
-        lower_red1 = np.array([0, 50, 50])
-        upper_red1 = np.array([10, 255, 255])
-        mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-        lower_red2 = np.array([170, 50, 50])
-        upper_red2 = np.array([180, 255, 255])
-        mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-        thresh = mask1 + mask2
+        digit_area = roi[y_master:y_master+h_master, x_master:x_master+w_master]
+        if digit_area.size == 0: continue
+        gray_digits = cv2.cvtColor(digit_area, cv2.COLOR_BGR2GRAY)
 
-        kernel = np.ones((3,3), np.uint8)
-        thresh = cv2.dilate(thresh, kernel, iterations=1)
+        # Use Otsu's method to get an adaptive threshold for the current frame
+        frame_thresh, _ = cv2.threshold(gray_digits, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours: continue
-
-        all_cnts = np.concatenate(contours)
-        x_all, y_all, w_all, h_all = cv2.boundingRect(all_cnts)
-        center_x_all = x_all + w_all / 2
-
-        digit1_contours = []
-        digit2_contours = []
-        for cnt in contours:
-            if cv2.contourArea(cnt) < 20: continue
-            x, y, wc, hc = cv2.boundingRect(cnt)
-            if (x + wc/2) < center_x_all:
-                digit1_contours.append(cnt)
+        segments = []
+        for y, x in sample_points:
+            if y < gray_digits.shape[0] and x < gray_digits.shape[1]:
+                if gray_digits[y, x] > frame_thresh:
+                    segments.append(1)
+                else:
+                    segments.append(0)
             else:
-                digit2_contours.append(cnt)
+                segments.append(0)
 
-        d1 = process_digit_contours(digit1_contours, thresh, STD_W, STD_H)
-        d2 = process_digit_contours(digit2_contours, thresh, STD_W, STD_H)
+        digit1_segs = tuple(segments[0:7])
+        digit2_segs = tuple(segments[7:14])
+        d1 = DIGITS_LOOKUP.get(digit1_segs, '?')
+        d2 = DIGITS_LOOKUP.get(digit2_segs, '?')
+
         current_val = f"{d1}{d2}"
-
-        if current_val != last_printed:
-            if '?' not in current_val:
-                print(current_val)
-                last_printed = current_val
+        if current_val != last_printed and '?' not in current_val:
+            print(current_val)
+            last_printed = current_val
 
     cap.release()
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: python decode_7seg.py <path_to_video>")
+        print("Usage: python decode_simple.py <path_to_video>")
         sys.exit(1)
     video_path = sys.argv[1]
     main(video_path)
