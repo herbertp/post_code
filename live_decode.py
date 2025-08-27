@@ -3,46 +3,29 @@ import numpy as np
 import sys
 import time
 import argparse
+import os
 
-def get_camera_prop_map():
-    """Returns a dictionary mapping string names to OpenCV CAP_PROP_* constants."""
-    return {
-        "brightness": cv2.CAP_PROP_BRIGHTNESS,
-        "contrast": cv2.CAP_PROP_CONTRAST,
-        "saturation": cv2.CAP_PROP_SATURATION,
-        "hue": cv2.CAP_PROP_HUE,
-        "gain": cv2.CAP_PROP_GAIN,
-        "exposure_time_absolute": cv2.CAP_PROP_EXPOSURE,
-        "pan_absolute": cv2.CAP_PROP_PAN,
-        "tilt_absolute": cv2.CAP_PROP_TILT,
-        "focus_absolute": cv2.CAP_PROP_FOCUS,
-        "zoom_absolute": cv2.CAP_PROP_ZOOM,
-        # Add other common properties if needed
-        "width": cv2.CAP_PROP_FRAME_WIDTH,
-        "height": cv2.CAP_PROP_FRAME_HEIGHT,
-        "fps": cv2.CAP_PROP_FPS,
-    }
-
-def set_camera_properties(cap, settings):
-    """Applies a list of key=value settings to the camera."""
+def set_camera_properties_v4l2(settings):
+    """
+    Applies a list of key=value settings to the camera using the
+    v4l2-ctl command-line tool.
+    """
     if not settings:
         return
 
-    prop_map = get_camera_prop_map()
-    print("Applying custom camera settings...")
+    print("Applying custom camera settings via v4l2-ctl...")
+    command_parts = ["v4l2-ctl"]
     for setting in settings:
         try:
+            # Ensure there are no spaces and the format is key=value
             key, value = setting.split('=', 1)
-            value = float(value)
-
-            if key in prop_map:
-                prop_id = prop_map[key]
-                cap.set(prop_id, value)
-                print(f"  - Set {key} to {value}")
-            else:
-                print(f"Warning: Unknown camera property '{key}'")
+            command_parts.append(f"-c {key}={value}")
         except ValueError:
             print(f"Warning: Invalid format for setting '{setting}'. Use key=value.")
+
+    command = " ".join(command_parts)
+    print(f"Executing: {command}")
+    os.system(command)
     # Give the camera a moment to apply settings
     time.sleep(0.5)
 
@@ -75,12 +58,14 @@ def get_segment_centroids(roi_for_calib):
     return ordered_left + ordered_right
 
 def main(args):
+    # Apply settings BEFORE opening the capture device, as some settings
+    # only take effect on initialization.
+    if isinstance(args.source, int):
+        set_camera_properties_v4l2(args.set)
+
     cap = cv2.VideoCapture(args.source)
     if not cap.isOpened():
         print(f"Error: Could not open source '{args.source}'"); return
-
-    if isinstance(args.source, int):
-        set_camera_properties(cap, args.set)
 
     state = 'AWAITING_CALIBRATION'
     roi_box, sample_points = None, None
@@ -147,7 +132,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Decode 7-segment display from video file or camera.")
     parser.add_argument("source", help="Path to video file or camera index (e.g., 0).")
     parser.add_argument("--visualize", action="store_true", help="Enable live visualization of the decoding process.")
-    parser.add_argument("--set", action="append", help="Set a camera property. Use key=value format. Can be used multiple times.")
+    parser.add_argument("--set", action="append", help="Set a camera property using v4l2-ctl. Use key=value format. Can be used multiple times.")
     args = parser.parse_args()
     try: args.source = int(args.source)
     except ValueError: pass
