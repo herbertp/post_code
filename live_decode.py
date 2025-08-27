@@ -5,6 +5,36 @@ import time
 import argparse
 import os
 from collections import deque
+from threading import Thread
+from queue import Queue
+
+class VideoStream:
+    """A threaded video stream reader to prevent blocking I/O."""
+    def __init__(self, src=0):
+        self.stream = cv2.VideoCapture(src)
+        self.grabbed, self.frame = self.stream.read()
+        self.stopped = False
+        self.queue = Queue(maxsize=1)
+
+    def start(self):
+        Thread(target=self.update, args=()).start()
+        return self
+
+    def update(self):
+        while not self.stopped:
+            if not self.queue.full():
+                grabbed, frame = self.stream.read()
+                if not grabbed:
+                    self.stop()
+                    return
+                self.queue.put(frame)
+
+    def read(self):
+        return self.queue.get()
+
+    def stop(self):
+        self.stopped = True
+        self.stream.release()
 
 def set_camera_properties_v4l2(device_index, settings):
     if not settings: return
@@ -36,7 +66,7 @@ def get_segment_centroids(roi_for_calib):
     def sort_digit_segments(digit_centroids):
         y_sorted = sorted(digit_centroids, key=lambda p: p[1])
         if len(y_sorted) < 7: return None
-        top_row = sorted(y_sorted[:3], key=lambda p: p[0])
+        top_row = sorted(y_sorted[:3], key=lambda p: p[0]);
         if len(top_row) < 3: return None
         seg_f, seg_a, seg_b = top_row[0], top_row[1], top_row[2]
         seg_g = y_sorted[3]
@@ -49,50 +79,18 @@ def get_segment_centroids(roi_for_calib):
     if ordered_left is None or ordered_right is None: return None
     return ordered_left + ordered_right
 
-def auto_calibrate(cap, search_limit=150):
-    print(f"Attempting auto-calibration by searching for '88' in the first {search_limit} frames...")
-    frame_count = 0
-    while frame_count < search_limit:
-        ret, frame = cap.read()
-        if not ret: return None, None
-        frame_count += 1
-        h, w, _ = frame.shape
-        roi = frame[h//3:2*h//3, w//3:2*w//3]
-        points = get_segment_centroids(roi)
-        if points:
-            print(f"Auto-calibration successful on frame #{frame_count}.")
-            all_points_np = np.array([[x,y] for y,x in points])
-            x_m, y_m, w_m, h_m = cv2.boundingRect(all_points_np)
-            roi_box = (x_m, y_m, w_m, h_m)
-            return roi_box, points
-    print("Auto-calibration failed.")
-    return None, None
-
 def main(args):
-    cap = cv2.VideoCapture(args.source)
-    if not cap.isOpened():
-        print(f"Error: Could not open source '{args.source}'"); return
+    vs = VideoStream(src=args.source).start()
+    time.sleep(1.0) # Allow camera to warm up
 
-    # --- Apply settings AFTER opening the camera ---
     if isinstance(args.source, int):
         if args.fps:
-            cap.set(cv2.CAP_PROP_FPS, args.fps)
+            vs.stream.set(cv2.CAP_PROP_FPS, args.fps)
             print(f"Requested FPS set to: {args.fps}")
         if args.set_ctrl:
-            set_camera_properties_v4l2(args.source, args.set_ctrl)
+            print("Camera settings provided. In visual mode, press 's' to apply them.")
 
-    state = 'AWAITING_CALIBRATION'
-    roi_box, sample_points = None, None
-
-    is_file = isinstance(args.source, str)
-    if is_file and not args.visualize:
-        roi_box, sample_points = auto_calibrate(cap)
-        if roi_box:
-            state = 'DECODING'
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-        else:
-            print("Could not auto-calibrate from file. Exiting."); return
-
+    state, roi_box, sample_points = 'AWAITING_CALIBRATION', None, None
     DIGITS_LOOKUP = {
         (1,1,1,1,1,1,0):'0', (0,1,1,0,0,0,0):'1', (1,1,0,1,1,0,1):'2', (1,1,1,1,0,0,1):'3',
         (0,1,1,0,0,1,1):'4', (1,0,1,1,0,1,1):'5', (1,0,1,1,1,1,1):'6', (1,1,1,0,0,0,0):'7',
@@ -102,12 +100,12 @@ def main(args):
     frame_idx, last_val = 0, ""
     fps_buffer = deque(maxlen=30)
 
-    print("Starting decoder. In interactive mode, press 'c' to calibrate, 'q' to quit.")
+    print("Starting decoder. Press 'c' to calibrate, 's' to apply settings, 'q' to quit.")
 
-    while True:
+    while not vs.stopped:
         start_time = time.time()
-        ret, frame = cap.read()
-        if not ret: print("End of video stream."); break
+        frame = vs.read()
+        if frame is None: break
         frame_idx += 1
 
         h, w, _ = frame.shape
@@ -149,7 +147,7 @@ def main(args):
 
             cv2.imshow("Decoder", display_frame)
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'): break
+            if key == ord('q'): vs.stop(); break
             elif key == ord('c'):
                 print("Attempting calibration on current frame...")
                 points = get_segment_centroids(roi)
@@ -160,8 +158,9 @@ def main(args):
                     state = 'DECODING'
                     print("Calibration successful.")
                 else: print("Calibration failed. Please try again.")
+            elif key == ord('s') and isinstance(args.source, int) and args.set_ctrl:
+                set_camera_properties_v4l2(args.source, args.set_ctrl)
 
-    cap.release()
     if args.visualize: cv2.destroyAllWindows()
     print("Decoder stopped.")
 
