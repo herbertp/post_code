@@ -69,23 +69,27 @@ def auto_calibrate(cap, search_limit=150):
     return None, None
 
 def main(args):
-    if isinstance(args.source, int) and args.set_ctrl:
-        set_camera_properties_v4l2(args.source, args.set_ctrl)
-
     cap = cv2.VideoCapture(args.source)
     if not cap.isOpened():
         print(f"Error: Could not open source '{args.source}'"); return
 
+    # --- Apply settings AFTER opening the camera ---
+    if isinstance(args.source, int):
+        if args.fps:
+            cap.set(cv2.CAP_PROP_FPS, args.fps)
+            print(f"Requested FPS set to: {args.fps}")
+        if args.set_ctrl:
+            set_camera_properties_v4l2(args.source, args.set_ctrl)
+
     state = 'AWAITING_CALIBRATION'
     roi_box, sample_points = None, None
 
-    # --- Smart Auto-calibration for non-visual file processing ---
     is_file = isinstance(args.source, str)
     if is_file and not args.visualize:
         roi_box, sample_points = auto_calibrate(cap)
         if roi_box:
             state = 'DECODING'
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # Rewind after calibration
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         else:
             print("Could not auto-calibrate from file. Exiting."); return
 
@@ -166,6 +170,7 @@ if __name__ == "__main__":
     parser.add_argument("source", help="Path to video file or camera index (e.g., 0).")
     parser.add_argument("--visualize", action="store_true", help="Enable live visualization of the decoding process.")
     parser.add_argument("-c", "--set-ctrl", action="append", dest="set_ctrl", help="Set a camera property using v4l2-ctl. Use key=value format. Can be used multiple times.")
+    parser.add_argument("--fps", type=int, help="Request a specific FPS from the camera.")
     parser.add_argument("-x", "--xpos", type=float, default=1/3, help="ROI top-left X position as a fraction of frame width (default: 1/3).")
     parser.add_argument("-y", "--ypos", type=float, default=1/3, help="ROI top-left Y position as a fraction of frame height (default: 1/3).")
     parser.add_argument("-w", "--width", type=float, default=1/3, help="ROI width as a fraction of frame width (default: 1/3).")
