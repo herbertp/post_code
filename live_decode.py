@@ -19,7 +19,7 @@ class VideoStream:
     def update(self):
         while not self.stopped:
             if self.queue.full():
-                time.sleep(0.001) # prevent busy-waiting
+                time.sleep(0.001)
                 continue
             grabbed, frame = self.stream.read()
             if not grabbed:
@@ -30,10 +30,11 @@ class VideoStream:
         try:
             return self.queue.get(timeout=1)
         except Empty:
-            self.stopped = True # If queue is empty for 1s, assume stream ended
+            self.stopped = True
             return None
     def stop(self):
         self.stopped = True
+        time.sleep(0.1)
         if hasattr(self.stream, 'release'):
             self.stream.release()
 
@@ -80,10 +81,9 @@ def get_segment_centroids(roi_for_calib):
     if ordered_left is None or ordered_right is None: return None
     return ordered_left + ordered_right
 
-def auto_calibrate(vs, args):
-    print(f"Attempting auto-calibration by searching for '88'...")
+def auto_calibrate(vs, args, search_limit=150):
+    print(f"Attempting auto-calibration by searching for '88' in the first {search_limit} frames...")
     frame_count = 0
-    search_limit = 150
     while frame_count < search_limit:
         frame = vs.read()
         if frame is None: return None, None
@@ -108,22 +108,21 @@ def main(args):
 
     if isinstance(args.source, int):
         if args.fps: vs.stream.set(cv2.CAP_PROP_FPS, args.fps); print(f"Requested FPS set to: {args.fps}")
-        if args.set_ctrl: print("Camera settings provided. In visual mode, press 's' to apply them.")
+        if args.set_ctrl: set_camera_properties_v4l2(args.source, args.set_ctrl)
 
     state = 'AWAITING_CALIBRATION'
     roi_box, sample_points = None, None
 
-    is_file = not isinstance(args.source, int)
-    if is_file and not args.visualize:
+    if not args.visualize:
         roi_box, sample_points = auto_calibrate(vs, args)
         if roi_box:
             state = 'DECODING'
-            # For files, we need to restart the stream to process from the beginning
-            vs.stop()
-            vs = VideoStream(src=args.source).start()
-            time.sleep(1.0)
+            if isinstance(args.source, str):
+                vs.stop()
+                vs = VideoStream(src=args.source).start()
+                time.sleep(1.0)
         else:
-            print("Could not auto-calibrate from file. Exiting."); vs.stop(); return
+            print("Could not auto-calibrate. Exiting."); vs.stop(); return
 
     DIGITS_LOOKUP = {
         (1,1,1,1,1,1,0):'0', (0,1,1,0,0,0,0):'1', (1,1,0,1,1,0,1):'2', (1,1,1,1,0,0,1):'3',
