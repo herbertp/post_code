@@ -5,19 +5,19 @@ import time
 import argparse
 import os
 
-def set_camera_properties_v4l2(settings):
+def set_camera_properties_v4l2(device_index, settings):
     """
     Applies a list of key=value settings to the camera using the
-    v4l2-ctl command-line tool.
+    v4l2-ctl command-line tool on a specific device.
     """
     if not settings:
         return
 
-    print("Applying custom camera settings via v4l2-ctl...")
-    command_parts = ["v4l2-ctl"]
+    device_path = f"/dev/video{device_index}"
+    print(f"Applying custom camera settings to {device_path} via v4l2-ctl...")
+    command_parts = ["v4l2-ctl", "-d", device_path]
     for setting in settings:
         try:
-            # Ensure there are no spaces and the format is key=value
             key, value = setting.split('=', 1)
             command_parts.append(f"-c {key}={value}")
         except ValueError:
@@ -26,7 +26,6 @@ def set_camera_properties_v4l2(settings):
     command = " ".join(command_parts)
     print(f"Executing: {command}")
     os.system(command)
-    # Give the camera a moment to apply settings
     time.sleep(0.5)
 
 def get_segment_centroids(roi_for_calib):
@@ -58,10 +57,8 @@ def get_segment_centroids(roi_for_calib):
     return ordered_left + ordered_right
 
 def main(args):
-    # Apply settings BEFORE opening the capture device, as some settings
-    # only take effect on initialization.
-    if isinstance(args.source, int):
-        set_camera_properties_v4l2(args.set)
+    if isinstance(args.source, int) and args.set_ctrl:
+        set_camera_properties_v4l2(args.source, args.set_ctrl)
 
     cap = cv2.VideoCapture(args.source)
     if not cap.isOpened():
@@ -132,7 +129,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Decode 7-segment display from video file or camera.")
     parser.add_argument("source", help="Path to video file or camera index (e.g., 0).")
     parser.add_argument("--visualize", action="store_true", help="Enable live visualization of the decoding process.")
-    parser.add_argument("--set", action="append", help="Set a camera property using v4l2-ctl. Use key=value format. Can be used multiple times.")
+    parser.add_argument("-c", "--set-ctrl", action="append", dest="set_ctrl", help="Set a camera property using v4l2-ctl. Use key=value format. Can be used multiple times.")
     args = parser.parse_args()
     try: args.source = int(args.source)
     except ValueError: pass
