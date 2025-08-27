@@ -4,15 +4,10 @@ import sys
 import time
 import argparse
 import os
+from collections import deque
 
 def set_camera_properties_v4l2(device_index, settings):
-    """
-    Applies a list of key=value settings to the camera using the
-    v4l2-ctl command-line tool on a specific device.
-    """
-    if not settings:
-        return
-
+    if not settings: return
     device_path = f"/dev/video{device_index}"
     print(f"Applying custom camera settings to {device_path} via v4l2-ctl...")
     command_parts = ["v4l2-ctl", "-d", device_path]
@@ -22,7 +17,6 @@ def set_camera_properties_v4l2(device_index, settings):
             command_parts.append(f"-c {key}={value}")
         except ValueError:
             print(f"Warning: Invalid format for setting '{setting}'. Use key=value.")
-
     command = " ".join(command_parts)
     print(f"Executing: {command}")
     os.system(command)
@@ -66,7 +60,6 @@ def main(args):
 
     state = 'AWAITING_CALIBRATION'
     roi_box, sample_points = None, None
-
     DIGITS_LOOKUP = {
         (1,1,1,1,1,1,0):'0', (0,1,1,0,0,0,0):'1', (1,1,0,1,1,0,1):'2', (1,1,1,1,0,0,1):'3',
         (0,1,1,0,0,1,1):'4', (1,0,1,1,0,1,1):'5', (1,0,1,1,1,1,1):'6', (1,1,1,0,0,0,0):'7',
@@ -74,16 +67,21 @@ def main(args):
         (1,0,0,1,1,1,0):'C', (0,1,1,1,1,0,1):'D', (1,0,0,1,1,1,1):'E', (1,0,0,0,1,1,1):'F'
     }
     frame_idx, last_val = 0, ""
+    fps_buffer = deque(maxlen=30)
 
     print("Starting decoder. Press 'c' to calibrate, 'q' to quit.")
 
     while True:
+        start_time = time.time()
         ret, frame = cap.read()
         if not ret: print("End of video stream."); break
         frame_idx += 1
 
         h, w, _ = frame.shape
-        roi = frame[h//3:2*h//3, w//3:2*w//3]
+        x_px, y_px = int(args.xpos * w), int(args.ypos * h)
+        w_px, h_px = int(args.width * w), int(args.height * h)
+        roi = frame[y_px:y_px+h_px, x_px:x_px+w_px]
+
         gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         display_frame = cv2.cvtColor(gray_roi, cv2.COLOR_GRAY2BGR) if args.visualize else None
         current_val = "??"
@@ -106,6 +104,16 @@ def main(args):
                 cv2.putText(display_frame, "Aim at '88' and press 'c'", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
 
             cv2.putText(display_frame, current_val, (10, display_frame.shape[0]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
+
+            fps = 1.0 / (time.time() - start_time)
+            fps_buffer.append(fps)
+            avg_fps = np.mean(fps_buffer)
+            fps_text = f"FPS: {avg_fps:.2f}"
+            text_size, _ = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            text_x = display_frame.shape[1] - text_size[0] - 10
+            text_y = display_frame.shape[0] - 10
+            cv2.putText(display_frame, fps_text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
+
             cv2.imshow("Decoder", display_frame)
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'): break
@@ -118,8 +126,7 @@ def main(args):
                     roi_box, sample_points = (x_m, y_m, w_m, h_m), points
                     state = 'DECODING'
                     print("Calibration successful.")
-                else:
-                    print("Calibration failed on this frame. Please try again.")
+                else: print("Calibration failed. Please try again.")
 
     cap.release()
     if args.visualize: cv2.destroyAllWindows()
@@ -130,6 +137,10 @@ if __name__ == "__main__":
     parser.add_argument("source", help="Path to video file or camera index (e.g., 0).")
     parser.add_argument("--visualize", action="store_true", help="Enable live visualization of the decoding process.")
     parser.add_argument("-c", "--set-ctrl", action="append", dest="set_ctrl", help="Set a camera property using v4l2-ctl. Use key=value format. Can be used multiple times.")
+    parser.add_argument("-x", "--xpos", type=float, default=1/3, help="ROI top-left X position as a fraction of frame width (default: 1/3).")
+    parser.add_argument("-y", "--ypos", type=float, default=1/3, help="ROI top-left Y position as a fraction of frame height (default: 1/3).")
+    parser.add_argument("-w", "--width", type=float, default=1/3, help="ROI width as a fraction of frame width (default: 1/3).")
+    parser.add_argument("-h", "--height", type=float, default=1/3, help="ROI height as a fraction of frame height (default: 1/3).")
     args = parser.parse_args()
     try: args.source = int(args.source)
     except ValueError: pass
