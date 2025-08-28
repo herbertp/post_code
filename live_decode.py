@@ -10,8 +10,13 @@ from queue import Queue, Empty
 
 class VideoStream:
     """A threaded video stream reader to prevent blocking I/O."""
-    def __init__(self, src=0):
+    def __init__(self, src=0, width=None, height=None, fps=None, fourcc=None):
         self.stream = cv2.VideoCapture(src)
+        if width: self.stream.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+        if height: self.stream.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+        if fourcc: self.stream.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
+        if fps: self.stream.set(cv2.CAP_PROP_FPS, fps)
+
         self.stopped = False
         self.queue = Queue(maxsize=1)
     def start(self):
@@ -46,7 +51,7 @@ def set_camera_properties_v4l2(device_index, settings):
     for setting in settings:
         try:
             key, value = setting.split('=', 1)
-            command_parts.append(f"-c {key}={value}")
+            command_parts.append(f"--set-ctrl={key}={value}")
         except ValueError: print(f"Warning: Invalid format for setting '{setting}'. Use key=value.")
     command = " ".join(command_parts)
     print(f"Executing: {command}")
@@ -103,46 +108,25 @@ def auto_calibrate(vs, args, search_limit=150):
     return None, None
 
 def main(args):
-    is_file = not isinstance(args.source, int)
-    vs = VideoStream(src=args.source).start()
+    vs = VideoStream(src=args.source, width=args.cam_width, height=args.cam_height, fps=args.fps, fourcc=args.format).start()
     time.sleep(1.0)
 
-    if isinstance(args.source, int):
-        if args.fps: vs.stream.set(cv2.CAP_PROP_FPS, args.fps); print(f"Requested FPS set to: {args.fps}")
-        if args.set_ctrl: set_camera_properties_v4l2(args.source, args.set_ctrl)
+    if isinstance(args.source, int) and args.set_ctrl:
+        set_camera_properties_v4l2(args.source, args.set_ctrl)
 
     state = 'AWAITING_CALIBRATION'
     roi_box, sample_points = None, None
 
-    if not args.visualize:
+    is_file = not isinstance(args.source, int)
+    if is_file and not args.visualize:
         roi_box, sample_points = auto_calibrate(vs, args)
         if roi_box:
             state = 'DECODING'
-            if is_file: vs.stop(); vs = VideoStream(src=args.source).start(); time.sleep(1.0)
+            vs.stop()
+            vs = VideoStream(src=args.source).start()
+            time.sleep(1.0)
         else:
-            # --- Console Interactive Mode ---
-            print("\n--- Entering Console Interactive Mode ---")
-            while True:
-                cmd = input("Calibration failed. Type 's' to apply settings, 'c' to calibrate, 'q' to quit: ")
-                if cmd == 'q': vs.stop(); print("Decoder stopped."); return
-                elif cmd == 's':
-                    if isinstance(args.source, int) and args.set_ctrl: set_camera_properties_v4l2(args.source, args.set_ctrl)
-                    else: print("No camera settings to apply.")
-                elif cmd == 'c':
-                    print("Attempting to capture and calibrate next frame...")
-                    frame = vs.read()
-                    if frame is not None:
-                        h, w, _ = frame.shape
-                        x_px, y_px = int(args.xpos * w), int(args.ypos * h)
-                        w_px, h_px = int(args.width * w), int(args.height * h)
-                        roi = frame[y_px:y_px+h_px, x_px:x_px+w_px]
-                        points = get_segment_centroids(roi)
-                        if points:
-                            all_points_np = np.array([[x,y] for y,x in points]); x_m, y_m, w_m, h_m = cv2.boundingRect(all_points_np)
-                            roi_box, sample_points = (x_m, y_m, w_m, h_m), points; state = 'DECODING'; print("Calibration successful.")
-                            break # Exit console mode and start decoding
-                        else: print("Calibration failed on this frame.")
-                    else: print("Could not get frame from camera.")
+            print("Could not auto-calibrate from file. Exiting."); vs.stop(); return
 
     DIGITS_LOOKUP = {
         (1,1,1,1,1,1,0):'0', (0,1,1,0,0,0,0):'1', (1,1,0,1,1,0,1):'2', (1,1,1,1,0,0,1):'3',
@@ -154,7 +138,7 @@ def main(args):
     fps_buffer = deque(maxlen=30)
     last_debug_print_time = time.time()
 
-    print("Starting decoder loop...")
+    print("Starting decoder. Press 'c' to calibrate, 's' to apply settings, 'q' to quit.")
 
     while True:
         start_time = time.time()
@@ -229,6 +213,9 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true", help="Print periodic FPS to the console in non-visual mode.")
     parser.add_argument("-c", "--set-ctrl", action="append", dest="set_ctrl", help="Set a camera property using v4l2-ctl. Use key=value format. Can be used multiple times.")
     parser.add_argument("--fps", type=int, help="Request a specific FPS from the camera.")
+    parser.add_argument("--cam-width", type=int, help="Set camera frame width.")
+    parser.add_argument("--cam-height", type=int, help="Set camera frame height.")
+    parser.add_argument("--format", type=str, help="Set camera FOURCC format (e.g., MJPG).")
     parser.add_argument("-x", "--xpos", type=float, default=1/3, help="ROI top-left X position as a fraction of frame width.")
     parser.add_argument("-y", "--ypos", type=float, default=1/3, help="ROI top-left Y position as a fraction of frame height.")
     parser.add_argument("-w", "--width", type=float, default=1/3, help="ROI width as a fraction of frame width.")
