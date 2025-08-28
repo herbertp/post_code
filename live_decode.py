@@ -107,14 +107,15 @@ def main(args):
         (1,1,1,1,1,1,1):'8', (1,1,1,1,0,1,1):'9', (1,1,1,0,1,1,1):'A', (0,0,1,1,1,1,1):'B',
         (1,0,0,1,1,1,0):'C', (0,1,1,1,1,0,1):'D', (1,0,0,1,1,1,1):'E', (1,0,0,0,1,1,1):'F'
     }
-    frame_idx, last_val = 0, ""
+    frame_idx, last_val, stable_count = 0, "", 0
+    last_printed_val = ""
     fps_buffer = deque(maxlen=30)
-    last_debug_print_time = time.time()
+    last_fps_update_time = time.time()
+    avg_fps = 0
 
     print("Starting decoder. In visual mode: 'c' to calibrate, 's' to apply settings, 'q' to quit.")
 
     while True:
-        start_time = time.time()
         frame = vs.read()
         if frame is None: break
         frame_idx += 1
@@ -134,16 +135,21 @@ def main(args):
             if points:
                 all_points_np = np.array([[x,y] for y,x in points]); x_m, y_m, w_m, h_m = cv2.boundingRect(all_points_np)
                 roi_box, sample_points = (x_m, y_m, w_m, h_m), points; state = 'DECODING'; print(f"Calibration successful on frame #{frame_idx}.")
-            else:
-                if not args.visualize: print(f"Frame {frame_idx}: Calibration failed, retrying..."); time.sleep(1)
+            elif not args.visualize: print(f"Frame {frame_idx}: Calibration failed, retrying..."); time.sleep(1)
 
         if state == 'DECODING':
             frame_thresh, _ = cv2.threshold(gray_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             segments = [1 if gray_roi[y,x] > frame_thresh else 0 for y,x in sample_points]
             d1 = DIGITS_LOOKUP.get(tuple(segments[0:7]), '?'); d2 = DIGITS_LOOKUP.get(tuple(segments[7:14]), '?')
             current_val = f"{d1}{d2}"
-            if '?' not in current_val and current_val != last_val:
-                print(f"{frame_idx},{current_val}"); last_val = current_val
+
+            if current_val == last_val:
+                stable_count += 1
+            else:
+                last_val = current_val; stable_count = 1
+
+            if '?' not in current_val and stable_count >= args.stable and current_val != last_printed_val:
+                print(f"{frame_idx},{current_val}"); last_printed_val = current_val
 
             if args.visualize:
                 x_m, y_m, w_m, h_m = roi_box
@@ -152,10 +158,12 @@ def main(args):
 
         if args.visualize:
             msg = current_val
-            if state == 'AWAITING_CALIBRATION': msg = "Calibrating... (or press 'c')"
+            if state == 'AWAITING_CALIBRATION': msg = "Calibrating... ('c' to force)"
             cv2.putText(display_frame, msg, (10, display_frame.shape[0]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
 
-            fps = 1.0 / (time.time() - start_time); fps_buffer.append(fps); avg_fps = np.mean(fps_buffer)
+            fps_buffer.append(1.0 / (time.time() - last_fps_update_time))
+            avg_fps = np.mean(fps_buffer)
+            last_fps_update_time = time.time()
             fps_text = f"FPS: {avg_fps:.2f}"; text_size, _ = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             cv2.putText(display_frame, fps_text, (display_frame.shape[1] - text_size[0] - 10, display_frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
 
@@ -170,10 +178,11 @@ def main(args):
                 else: print("Manual calibration failed.")
             elif key == ord('s') and isinstance(args.source, int) and args.set_ctrl: set_camera_properties_v4l2(args.source, args.set_ctrl)
 
-        elif args.debug and state == 'DECODING':
-            fps = 1.0 / (time.time() - start_time); fps_buffer.append(fps)
-            if time.time() - last_debug_print_time > 5.0:
-                print(f"[DEBUG] Average FPS: {np.mean(fps_buffer):.2f}"); last_debug_print_time = time.time()
+        elif args.debug:
+            fps_buffer.append(1.0 / (time.time() - last_fps_update_time))
+            last_fps_update_time = time.time()
+            if frame_idx % 30 == 0: # Print every 30 frames
+                print(f"[DEBUG] Average FPS: {np.mean(fps_buffer):.2f}")
 
     vs.stop()
     if args.visualize: cv2.destroyAllWindows()
@@ -189,7 +198,8 @@ if __name__ == "__main__":
     parser.add_argument("--cam-width", type=int, help="Set camera frame width.")
     parser.add_argument("--cam-height", type=int, help="Set camera frame height.")
     parser.add_argument("--format", type=str, help="Set camera FOURCC format (e.g., MJPG).")
-    parser.add_argument("--geometry", type=str, default="0.33x0.33@(0.5,0.5)", help="ROI geometry as WxH@(X,Y) in fractions of frame dimensions.")
+    parser.add_argument("--geometry", type=str, default="0.33x0.33@0.5,0.5", help="ROI geometry as WxH@(X,Y) in fractions of frame dimensions.")
+    parser.add_argument("--stable", type=int, default=2, help="Number of stable frames required before reporting a new value.")
     args = parser.parse_args()
     try: args.source = int(args.source)
     except ValueError: pass
