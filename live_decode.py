@@ -114,9 +114,26 @@ def parse_geometry(geometry_str):
     print("Warning: Invalid geometry format. Using default.")
     return 1/3, 1/3, 1/3, 1/3
 
+def load_decode_map(filepath):
+    if not filepath: return {}
+    try:
+        decode_map = {}
+        with open(filepath, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'): continue
+                parts = re.split(r'[:\s]+', line, 1)
+                if len(parts) == 2:
+                    decode_map[parts[0].upper()] = parts[1].strip()
+        print(f"Successfully loaded {len(decode_map)} POST code descriptions.")
+        return decode_map
+    except FileNotFoundError:
+        print(f"Warning: Decode file not found at '{filepath}'")
+        return {}
+
 def main(args):
     roi_props = parse_geometry(args.geometry)
-
+    decode_map = load_decode_map(args.decode)
     vs = VideoStream(src=args.source, width=args.cam_width, height=args.cam_height, fps=args.fps, fourcc=args.format).start()
     time.sleep(1.0)
 
@@ -129,7 +146,7 @@ def main(args):
         roi_box, sample_points = auto_calibrate(vs, args)
         if roi_box:
             state = 'DECODING'
-            if isinstance(args.source, str): # Rewind video file
+            if isinstance(args.source, str):
                 vs.stop(); vs = VideoStream(src=args.source).start(); time.sleep(1.0)
         else:
             print("Could not auto-calibrate. Exiting."); vs.stop(); return
@@ -151,12 +168,10 @@ def main(args):
         if frame is None: break
         frame_idx += 1
 
-        # --- FPS Calculation ---
         current_time = time.time()
         time_delta = current_time - last_time
         last_time = current_time
-        if time_delta > 0:
-            fps_buffer.append(1.0 / time_delta)
+        if time_delta > 0: fps_buffer.append(1.0 / time_delta)
 
         h, w, _ = frame.shape
         x_frac, y_frac, w_frac, h_frac = roi_props
@@ -178,7 +193,9 @@ def main(args):
             else: last_val = current_val; stable_count = 1
 
             if '?' not in current_val and stable_count >= args.stable and current_val != last_printed_val:
-                print(f"{frame_idx},{current_val}"); last_printed_val = current_val
+                description = decode_map.get(current_val, "")
+                print(f"{frame_idx},{current_val} {description}".strip())
+                last_printed_val = current_val
 
             if args.visualize:
                 x_m, y_m, w_m, h_m = roi_box
@@ -206,7 +223,7 @@ def main(args):
             elif key == ord('s') and isinstance(args.source, int) and args.set_ctrl: set_camera_properties_v4l2(args.source, args.set_ctrl)
 
         elif args.debug:
-            if frame_idx % 150 == 0: # Print roughly every 5s at 30fps, or every 1s at 150fps
+            if frame_idx % 150 == 0:
                 avg_fps = np.mean(fps_buffer) if fps_buffer else 0
                 print(f"[DEBUG] Average FPS: {avg_fps:.2f}")
 
@@ -219,6 +236,7 @@ if __name__ == "__main__":
     parser.add_argument("source", help="Path to video file or camera index (e.g., 0).")
     parser.add_argument("--visualize", action="store_true", help="Enable live visualization of the decoding process.")
     parser.add_argument("--debug", action="store_true", help="Print periodic FPS to the console in non-visual mode.")
+    parser.add_argument("--decode", type=str, default="", help="Path to a file with POST code descriptions (e.g., AA:Description).")
     parser.add_argument("-c", "--set-ctrl", action="append", dest="set_ctrl", help="Set a camera property using v4l2-ctl. Use key=value format. Can be used multiple times.")
     parser.add_argument("--fps", type=int, help="Request a specific FPS from the camera.")
     parser.add_argument("--cam-width", type=int, help="Set camera frame width.")
