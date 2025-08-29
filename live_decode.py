@@ -25,7 +25,9 @@ class VideoStream:
         while not self.stopped:
             if self.queue.full(): time.sleep(0.001); continue
             grabbed, frame = self.stream.read()
-            if not grabbed: self.stop(); return
+            if not grabbed:
+                self.stop()
+                return
             self.queue.put(frame)
     def read(self):
         try: return self.queue.get(timeout=1)
@@ -77,6 +79,28 @@ def get_segment_centroids(roi_for_calib):
     if ordered_left is None or ordered_right is None: return None
     return ordered_left + ordered_right
 
+def auto_calibrate(vs, args, search_limit=150):
+    print(f"Attempting auto-calibration by searching for '88' in the first {search_limit} frames...")
+    frame_count = 0
+    while frame_count < search_limit:
+        frame = vs.read()
+        if frame is None: return None, None
+        frame_count += 1
+        h, w, _ = frame.shape
+        x_frac, y_frac, w_frac, h_frac = parse_geometry(args.geometry)
+        x_px, y_px = int(x_frac * w), int(y_frac * h)
+        w_px, h_px = int(w_frac * w), int(h_frac * h)
+        roi = frame[y_px:y_px+h_px, x_px:x_px+w_px]
+        points = get_segment_centroids(roi)
+        if points:
+            print(f"Auto-calibration successful on frame #{frame_count}.")
+            all_points_np = np.array([[x,y] for y,x in points])
+            x_m, y_m, w_m, h_m = cv2.boundingRect(all_points_np)
+            roi_box = (x_m, y_m, w_m, h_m)
+            return roi_box, points
+    print("Auto-calibration failed.")
+    return None, None
+
 def parse_geometry(geometry_str):
     match = re.match(r"(\d+(\.\d+)?)x(\d+(\.\d+)?)@\((\d+(\.\d+)?),(\d+(\.\d+)?)\)", geometry_str)
     if match:
@@ -87,33 +111,12 @@ def parse_geometry(geometry_str):
     if match:
         w = float(match.group(1)); h = float(match.group(3))
         return (0.5 - w/2), (0.5 - h/2), w, h
-    return None
-
-def load_decode_map(filepath):
-    """Loads a key-value mapping file for POST code descriptions."""
-    if not filepath: return {}
-    try:
-        decode_map = {}
-        with open(filepath, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith('#'): continue
-                parts = re.split(r'[:\s]+', line, 1)
-                if len(parts) == 2:
-                    key, value = parts
-                    decode_map[key.upper()] = value.strip()
-        print(f"Successfully loaded {len(decode_map)} POST code descriptions.")
-        return decode_map
-    except FileNotFoundError:
-        print(f"Warning: Decode file not found at '{filepath}'")
-        return {}
+    print("Warning: Invalid geometry format. Using default.")
+    return 1/3, 1/3, 1/3, 1/3
 
 def main(args):
     roi_props = parse_geometry(args.geometry)
-    if roi_props is None:
-        print("Error: Invalid geometry format. Use WxH or WxH@(X,Y)."); return
 
-    decode_map = load_decode_map(args.decode)
     vs = VideoStream(src=args.source, width=args.cam_width, height=args.cam_height, fps=args.fps, fourcc=args.format).start()
     time.sleep(1.0)
 
@@ -121,6 +124,16 @@ def main(args):
         set_camera_properties_v4l2(args.source, args.set_ctrl)
 
     state, roi_box, sample_points = 'AWAITING_CALIBRATION', None, None
+
+    if not args.visualize:
+        roi_box, sample_points = auto_calibrate(vs, args)
+        if roi_box:
+            state = 'DECODING'
+            if isinstance(args.source, str): # Rewind video file
+                vs.stop(); vs = VideoStream(src=args.source).start(); time.sleep(1.0)
+        else:
+            print("Could not auto-calibrate. Exiting."); vs.stop(); return
+
     DIGITS_LOOKUP = {
         (1,1,1,1,1,1,0):'0', (0,1,1,0,0,0,0):'1', (1,1,0,1,1,0,1):'2', (1,1,1,1,0,0,1):'3',
         (0,1,1,0,0,1,1):'4', (1,0,1,1,0,1,1):'5', (1,0,1,1,1,1,1):'6', (1,1,1,0,0,0,0):'7',
@@ -129,7 +142,7 @@ def main(args):
     }
     frame_idx, last_val, stable_count, last_printed_val = 0, "", 0, ""
     fps_buffer = deque(maxlen=30)
-    last_debug_print_time = time.time()
+    last_time = time.time()
 
     print("Starting decoder. In visual mode: 'c' to calibrate, 's' to apply settings, 'q' to quit.")
 
@@ -138,6 +151,13 @@ def main(args):
         if frame is None: break
         frame_idx += 1
 
+        # --- FPS Calculation ---
+        current_time = time.time()
+        time_delta = current_time - last_time
+        last_time = current_time
+        if time_delta > 0:
+            fps_buffer.append(1.0 / time_delta)
+
         h, w, _ = frame.shape
         x_frac, y_frac, w_frac, h_frac = roi_props
         x_px, y_px = int(x_frac * w), int(y_frac * h)
@@ -145,14 +165,8 @@ def main(args):
         roi = frame[y_px:y_px+h_px, x_px:x_px+w_px]
 
         gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        display_frame = cv2.cvtColor(gray_roi, cv2.COLOR_GRAY2BGR) if args.visualize else None
         current_val = "??"
-
-        if state == 'AWAITING_CALIBRATION':
-            points = get_segment_centroids(roi)
-            if points:
-                all_points_np = np.array([[x,y] for y,x in points]); x_m, y_m, w_m, h_m = cv2.boundingRect(all_points_np)
-                roi_box, sample_points = (x_m, y_m, w_m, h_m), points; state = 'DECODING'; print(f"Calibration successful on frame #{frame_idx}.")
-            elif not args.visualize: print(f"Frame {frame_idx}: Calibration failed, retrying..."); time.sleep(1)
 
         if state == 'DECODING':
             frame_thresh, _ = cv2.threshold(gray_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -164,23 +178,19 @@ def main(args):
             else: last_val = current_val; stable_count = 1
 
             if '?' not in current_val and stable_count >= args.stable and current_val != last_printed_val:
-                description = decode_map.get(current_val, "")
-                print(f"{frame_idx},{current_val} {description}".strip())
-                last_printed_val = current_val
+                print(f"{frame_idx},{current_val}"); last_printed_val = current_val
 
-        if args.visualize:
-            display_frame = cv2.cvtColor(gray_roi, cv2.COLOR_GRAY2BGR)
-            msg = current_val
-            if state == 'DECODING':
+            if args.visualize:
                 x_m, y_m, w_m, h_m = roi_box
                 cv2.rectangle(display_frame, (x_m, y_m), (x_m + w_m, y_m + h_m), (255, 0, 0), 1)
                 for y, x in sample_points: cv2.circle(display_frame, (x, y), 2, (0, 0, 255), -1)
-            else: msg = "Calibrating... ('c' to force)"
 
+        if args.visualize:
+            msg = current_val
+            if state == 'AWAITING_CALIBRATION': msg = "Calibrating... ('c' to force)"
             cv2.putText(display_frame, msg, (10, display_frame.shape[0]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
 
-            fps = 1.0 / (time.time() - start_time) if (time.time() - start_time) > 0 else 0
-            fps_buffer.append(fps); avg_fps = np.mean(fps_buffer)
+            avg_fps = np.mean(fps_buffer) if fps_buffer else 0
             fps_text = f"FPS: {avg_fps:.2f}"; text_size, _ = cv2.getTextSize(fps_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             cv2.putText(display_frame, fps_text, (display_frame.shape[1] - text_size[0] - 10, display_frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
 
@@ -195,11 +205,10 @@ def main(args):
                 else: print("Manual calibration failed.")
             elif key == ord('s') and isinstance(args.source, int) and args.set_ctrl: set_camera_properties_v4l2(args.source, args.set_ctrl)
 
-        elif args.debug and state == 'DECODING':
-            fps = 1.0 / (time.time() - start_time) if (time.time() - start_time) > 0 else 0
-            fps_buffer.append(fps)
-            if time.time() - last_debug_print_time > 5.0:
-                print(f"[DEBUG] Average FPS: {np.mean(fps_buffer):.2f}"); last_debug_print_time = time.time()
+        elif args.debug:
+            if frame_idx % 150 == 0: # Print roughly every 5s at 30fps, or every 1s at 150fps
+                avg_fps = np.mean(fps_buffer) if fps_buffer else 0
+                print(f"[DEBUG] Average FPS: {avg_fps:.2f}")
 
     vs.stop()
     if args.visualize: cv2.destroyAllWindows()
@@ -210,13 +219,12 @@ if __name__ == "__main__":
     parser.add_argument("source", help="Path to video file or camera index (e.g., 0).")
     parser.add_argument("--visualize", action="store_true", help="Enable live visualization of the decoding process.")
     parser.add_argument("--debug", action="store_true", help="Print periodic FPS to the console in non-visual mode.")
-    parser.add_argument("--decode", type=str, default="", help="Path to a file with POST code descriptions (e.g., AA:Description).")
     parser.add_argument("-c", "--set-ctrl", action="append", dest="set_ctrl", help="Set a camera property using v4l2-ctl. Use key=value format. Can be used multiple times.")
     parser.add_argument("--fps", type=int, help="Request a specific FPS from the camera.")
     parser.add_argument("--cam-width", type=int, help="Set camera frame width.")
     parser.add_argument("--cam-height", type=int, help="Set camera frame height.")
     parser.add_argument("--format", type=str, help="Set camera FOURCC format (e.g., MJPG).")
-    parser.add_argument("--geometry", type=str, default="0.33x0.33@0.5,0.5", help="ROI geometry as WxH@(X,Y) in fractions of frame dimensions.")
+    parser.add_argument("--geometry", type=str, default="0.33x0.33@0.5,0.5", help="ROI geometry as WxH or WxH@(X,Y) in fractions of frame dimensions.")
     parser.add_argument("--stable", type=int, default=2, help="Number of stable frames required before reporting a new value.")
     args = parser.parse_args()
     try: args.source = int(args.source)
