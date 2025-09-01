@@ -1,87 +1,147 @@
-01: System is entering S1 sleep state
-02: System is entering S2 sleep state
-03: System is entering S3 sleep state
-04: System is entering S4 sleep state
-05: System is entering S5 sleep state
+00: ?
+01: Power On
+02: AP initialization  (pre microcode)
+03: SA initialization  (pre microcode)
+04: PCH initialization (pre microcode)
+05: System is entering S5 ?
 06: Microcode loading
-07: AP initialization after microcode loading
-08: System Agent initialization after microcode loading
-09: PCH initialization after microcode loading
+07: AP initialization  (post microcode)
+08: SA initialization  (post microcode)
+09: PCH initialization (post microcode)
 0B: Cache initialization
-0C: Reserved for future AMI SEC error codes
-0D: Reserved for future AMI SEC error codes
+0C: Reserved AMI SEC error code
+0D: Reserved AMI SEC error code (before setup)
 0E: Microcode not found
 0F: Microcode not loaded
-10: System is waking up from the S1 sleep state
+10: PEI Core is started
 11: Pre-memory CPU initialization is started
-12: Pre-memory CPU initialization (CPU module specific)
-13: Pre-memory CPU initialization (CPU module specific)
-14: Pre-memory CPU initialization (CPU module specific)
-15: Pre-memory System Agent initialization is started
-16: Pre-memory System Agent initialization (System Agent module specific)
-17: Pre-memory System Agent initialization (System Agent module specific)
-18: Pre-memory System Agent initialization (System Agent module specific)
+12: Pre-memory CPU initialization
+13: Pre-memory CPU initialization
+14: Pre-memory CPU initialization
+15: Pre-memory SA  initialization is started
+16: Pre-memory SA  initialization
+17: Pre-memory SA  initialization
+18: Pre-memory SA  initialization
 19: Pre-memory PCH initialization is started
-1A: Pre-memory PCH initialization (PCH module specific)
-1B: Pre-memory PCH initialization (PCH module specific)
-1C: Pre-memory PCH initialization (PCH module specific)
-20: System is waking up from the S2 sleep state
+1A: Pre-memory PCH initialization
+1B: Pre-memory PCH initialization
+1C: Pre-memory PCH initialization
+1D:
+1E:
+1F:
+20: ? 
+21:
+22:
+23:
+24:
+25: ?
+26:
+27: ?
+28: ?
+29:
+2A:
 2B: Memory initialization. Serial Presence Detect (SPD) data reading
 2C: Memory initialization. Memory presence detection
 2D: Memory initialization. Programming memory timing information
 2E: Memory initialization. Configuring memory
 2F: Memory initialization (other)
-30: System is waking up from the S3 sleep state
+30:
 31: Memory Installed
 32: CPU post-memory initialization is started
-33: CPU post-memory initialization. Cache initialization
-34: CPU post-memory initialization. Application Processor(s) (AP) initialization
-35: CPU post-memory initialization. Boot Strap Processor (BSP) selection
-36: CPU post-memory initialization. System Management Mode (SMM) initialization
-37: Post-Memory System Agent initialization is started
-38: Post-Memory System Agent initialization (System Agent module specific)
-39: Post-Memory System Agent initialization (System Agent module specific)
-3A: Post-Memory System Agent initialization (System Agent module specific)
+33: CPU post-memory initialization Cache initialization
+34: CPU post-memory initialization Application Processor(s) (AP)
+35: CPU post-memory initialization Boot Strap Processor (BSP)
+36: CPU post-memory initialization System Management Mode (SMM)
+37: Post-Memory SA  initialization is started
+38: Post-Memory SA  initialization
+39: Post-Memory SA  initialization
+3A: Post-Memory SA  initialization
 3B: Post-Memory PCH initialization is started
-3C: Post-Memory PCH initialization (PCH module specific)
-3D: Post-Memory PCH initialization (PCH module specific)
-3E: Post-Memory PCH initialization (PCH module specific)
-40: System is waking up from the S4 sleep state
+3C: Post-Memory PCH initialization
+3D: Post-Memory PCH initialization
+3E: Post-Memory PCH initialization
+3F: ?
+40: ?
+41: ?
+42: ?
+43: ?
+44: ?
+45: ?
+46: 
+47: ?
+48:
+49: ?
+4A:
 4B: Memory not installed (For Summit CPU)
+4C:
+4D:
+4E:
 4F: DXE IPL is started
+50:
+51: Reboot (shutdown -r)
+52: ?
+53: ?
+54: ?
+55: ?
+56: ?
+57: ?
+58: ?
+59: ?
+5A: ?
+5B:
+5C:
+5D:
+5E:
+5F:
 60: DXE Core is started
 61: NVRAM initialization
 62: Installation of the PCH Runtime Services
 63: CPU DXE initialization is started
-64: CPU DXE initialization (CPU module specific)
-65: CPU DXE initialization (CPU module specific)
-66: CPU DXE initialization (CPU module specific)
-67: CPU DXE initialization (CPU module specific)
+64: CPU DXE initialization
+65: CPU DXE initialization
+66: CPU DXE initialization
+67: CPU DXE initialization
 68: PCI host bridge initialization
-69: System Agent DXE initialization is started
-6A: System Agent DXE SMM initialization is started
-6B: System Agent DXE initialization (System Agent module specific)
-6C: System Agent DXE initialization (System Agent module specific)
-6D: System Agent DXE initialization (System Agent module specific)
-6E: System Agent DXE initialization (System Agent module specific)
-6F: System Agent DXE initialization (System Agent module specific)
+69: SA  DXE initialization is started
+6A: SA  DXE SMM initialization is started
+6B: SA  DXE initialization
+6C: SA  DXE initialization
+6D: SA  DXE initialization
+6E: SA  DXE initialization
+6F: SA  DXE initialization
 70: PCH DXE initialization is started
 71: PCH DXE SMM initialization is started
 72: PCH devices initialization
-73: PCH DXE Initialization (PCH module specific)
-74: PCH DXE Initialization (PCH module specific)
-75: PCH DXE Initialization (PCH module specific)
-76: PCH DXE Initialization (PCH module specific)
-77: PCH DXE Initialization (PCH module specific)
+73: PCH DXE Initialization
+74: PCH DXE Initialization
+75: PCH DXE Initialization
+76: PCH DXE Initialization
+77: PCH DXE Initialization
 78: ACPI module initialization
 79: CSM initialization
-7A: Reserved for future AMI DXE codes
-7B: Reserved for future AMI DXE codes
-7C: Reserved for future AMI DXE codes
-7D: Reserved for future AMI DXE codes
-7E: Reserved for future AMI DXE codes
-7F: Reserved for future AMI DXE codes
-90: Boot Device Selection (BDS) phase is started
+7A: Reserved AMI DXE code
+7B: Reserved AMI DXE code
+7C: Reserved AMI DXE code
+7D: Reserved AMI DXE code
+7E: Reserved AMI DXE code
+7F: Reserved AMI DXE code
+80:
+81:
+82:
+83:
+84:
+85:
+86:
+87:
+88:
+89:
+8A:
+8B:
+8C:
+8D:
+8E:
+8F:
+90: Boot Device Selection (BDS) is started
 91: Driver connecting is started
 92: PCI Bus initialization is started
 93: PCI Bus Hot Plug Controller Initialization
@@ -95,8 +155,8 @@
 9B: USB Reset
 9C: USB Detect
 9D: USB Enable
-9E: Reserved for future AMI codes
-9F: Reserved for future AMI codes
+9E: Reserved AMI code
+9F: Reserved AMI code
 A0: IDE initialization is started
 A1: IDE Reset
 A2: IDE Detect
@@ -107,9 +167,9 @@ A6: SCSI Detect
 A7: SCSI Enable
 A8: Setup Verifying Password
 A9: Start of Setup
-AA: System has transitioned into ACPI mode. Interrupt controller is in APIC mode.
+AA: System has transitioned into ACPI mode (APIC)
 AB: Setup Input Wait
-AC: System has transitioned into ACPI mode. Interrupt controller is in PIC mode.
+AC: System has transitioned into ACPI mode (PIC)
 AD: Ready To Boot event
 AE: Legacy Boot event
 AF: Exit Boot Services event
@@ -121,14 +181,30 @@ B4: USB hot plug
 B5: PCI bus hot plug
 B6: Clean-up of NVRAM
 B7: Configuration Reset (reset of NVRAM settings)
-B8: Reserved for future AMI codes
-B9: Reserved for future AMI codes
-BA: Reserved for future AMI codes
-BB: Reserved for future AMI codes
-BC: Reserved for future AMI codes
-BD: Reserved for future AMI codes
-BE: Reserved for future AMI codes
-BF: Reserved for future AMI codes
+B8: Reserved AMI code
+B9: Reserved AMI code
+BA: Reserved AMI code
+BB: Reserved AMI code
+BC: Reserved AMI code
+BD: Reserved AMI code
+BE: Reserved AMI code
+BF: Reserved AMI code
+C0:
+C1: ?
+C2: ?
+C3:
+C4:
+C5:
+C6:
+C7:
+C8:
+C9: ?
+CA:
+CB:
+CC:
+CD: ?
+CE:
+CF:
 D0: CPU initialization error
 D1: System Agent initialization error
 D2: PCH initialization error
@@ -142,35 +218,38 @@ D9: Error loading Boot Option (LoadImage returned error)
 DA: Boot Option is failed (StartImage returned error)
 DB: Flash update is failed
 DC: Reset protocol is not available
+DD:
+DE:
+DF:
 E0: S3 Resume is stared (S3 Resume PPI is called by the DXE IPL)
 E1: S3 Boot Script execution
-E2: Video repost
-E3: OS S3 wake vector call
-E4: Reserved for future AMI progress codes
-E5: Reserved for future AMI progress codes
-E6: Reserved for future AMI progress codes
-E7: Reserved for future AMI progress codes
+E2: S3 Video repost
+E3: S3 OS wake vector call
+E4: Reserved AMI progress code
+E5: Reserved AMI progress code
+E6: Reserved AMI progress code
+E7: Reserved AMI progress code
 E8: S3 Resume Failed
 E9: S3 Resume PPI not Found
 EA: S3 Resume Boot Script Error
 EB: S3 OS Wake Error
-EC: Reserved for future AMI error codes
-ED: Reserved for future AMI error codes
-EE: Reserved for future AMI error codes
-EF: Reserved for future AMI error codes
-F0: Recovery condition triggered by firmware (Auto recovery)
-F1: Recovery condition triggered by user (Forced recovery)
+EC: Reserved AMI error code
+ED: Reserved AMI error code
+EE: Reserved AMI error code
+EF: Reserved AMI error code
+F0: Recovery condition triggered by firmware
+F1: Recovery condition triggered by user
 F2: Recovery process started
 F3: Recovery firmware image is found
 F4: Recovery firmware image is loaded
-F5: Reserved for future AMI progress codes
-F6: Reserved for future AMI progress codes
-F7: Reserved for future AMI progress codes
+F5: Reserved AMI progress code
+F6: Reserved AMI progress code
+F7: Reserved AMI progress code
 F8: Recovery PPI is not available
 F9: Recovery capsule is not found
 FA: Invalid recovery capsule
-FB: Reserved for future AMI error codes
-FC: Reserved for future AMI error codes
-FD: Reserved for future AMI error codes
-FE: Reserved for future AMI error codes
-FF: Reserved for future AMI error codes
+FB: Reserved AMI error code
+FC: Reserved AMI error code
+FD: Reserved AMI error code
+FE: Reserved AMI error code
+FF: Reserved AMI error code
