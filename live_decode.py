@@ -96,15 +96,18 @@ def get_segment_centroids(roi_for_calib):
             'g': (x_min + (x_max-x_min)*0.5, y_min + (y_max-y_min)*0.5)
         }
 
+        # Point-centric classification to avoid greedy assignment errors
+        zone_assignments = {name: [] for name in canonical_zones.keys()}
+        for p in digit_centroids:
+            dists = {name: np.hypot(p[0]-c[0], p[1]-c[1]) for name, c in canonical_zones.items()}
+            best_zone = min(dists, key=dists.get)
+            zone_assignments[best_zone].append(p)
+
+        # Calculate the final centroid for each detected segment
         points = {}
-        temp_centroids = list(digit_centroids)
-        for name, c_point in canonical_zones.items():
-            dists = [np.hypot(p[0]-c_point[0], p[1]-c_point[1]) for p in temp_centroids]
-            if not dists: continue
-            idx = np.argmin(dists)
-            # Heuristic: if the point is reasonably close to the zone center
-            if dists[idx] < (x_max - x_min) * 0.5:
-                points[name] = temp_centroids.pop(idx)
+        for name, plist in zone_assignments.items():
+            if plist:
+                points[name] = (int(np.mean([p[0] for p in plist])), int(np.mean([p[1] for p in plist])))
 
         # If we have all 7 points, we can use the original reliable sorter logic
         if len(points) == 7:
