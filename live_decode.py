@@ -57,30 +57,82 @@ def get_segment_centroids(roi_for_calib):
     kernel = np.ones((3,3), np.uint8)
     eroded = cv2.erode(thresh, kernel, iterations=2)
     contours, _ = cv2.findContours(eroded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    MIN_CONTOURS = 10
     segment_contours = sorted([c for c in contours if cv2.contourArea(c) > 10], key=cv2.contourArea, reverse=True)[:14]
-    if len(segment_contours) < 14: return None
+    if len(segment_contours) < MIN_CONTOURS: return None
+
     centroids = [ (int(cv2.moments(c)["m10"] / cv2.moments(c)["m00"]), int(cv2.moments(c)["m01"] / cv2.moments(c)["m00"])) for c in segment_contours if cv2.moments(c)["m00"] !=0]
-    if len(centroids) < 14: return None
-    centroids.sort(key=lambda p: p[0])
-    left_centroids, right_centroids = centroids[:7], centroids[7:]
-    def sort_digit_segments(digit_centroids):
-        y_sorted = sorted(digit_centroids, key=lambda p: p[1])
-        if len(y_sorted) < 7: return None
-        top_row = sorted(y_sorted[:3], key=lambda p: p[0]);
-        if len(top_row) < 3: return None
-        seg_f, seg_a, seg_b = top_row[0], top_row[1], top_row[2]
-        seg_g = y_sorted[3]
-        bot_row = sorted(y_sorted[4:], key=lambda p: p[0])
-        if len(bot_row) < 3: return None
-        seg_e, seg_d, seg_c = bot_row[0], bot_row[1], bot_row[2]
-        return [(y,x) for x,y in [seg_a, seg_b, seg_c, seg_d, seg_e, seg_f, seg_g]]
-    ordered_left = sort_digit_segments(left_centroids)
-    ordered_right = sort_digit_segments(right_centroids)
+    if len(centroids) < MIN_CONTOURS: return None
+
+    # Use K-Means clustering to separate the two digits
+    points_np = np.float32(centroids)
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+    _, labels, centers = cv2.kmeans(points_np, 2, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+
+    group1 = [tuple(p) for i, p in enumerate(centroids) if labels[i] == 0]
+    group2 = [tuple(p) for i, p in enumerate(centroids) if labels[i] == 1]
+
+    # Determine which group is left and which is right
+    mean_x1 = np.mean([p[0] for p in group1])
+    mean_x2 = np.mean([p[0] for p in group2])
+
+    if mean_x1 < mean_x2:
+        left_centroids, right_centroids = group1, group2
+    else:
+        left_centroids, right_centroids = group2, group1
+
+    def interpolate_and_sort_segments(digit_centroids):
+        if not (5 <= len(digit_centroids) <= 7): return None
+
+        # 1. Get Bounding Box
+        x_coords = [p[0] for p in digit_centroids]
+        y_coords = [p[1] for p in digit_centroids]
+        x_min, x_max = min(x_coords), max(x_coords)
+        y_min, y_max = min(y_coords), max(y_coords)
+        w, h = x_max - x_min, y_max - y_min
+
+        # 2. Define Zones for each segment
+        zones = {
+            'a': (x_min, y_min, x_max, y_min + h * 0.2),
+            'g': (x_min, y_min + h * 0.4, x_max, y_min + h * 0.6),
+            'd': (x_min, y_min + h * 0.8, x_max, y_max),
+            'f': (x_min, y_min, x_min + w * 0.5, y_min + h * 0.5),
+            'b': (x_min + w * 0.5, y_min, x_max, y_min + h * 0.5),
+            'e': (x_min, y_min + h * 0.5, x_min + w * 0.5, y_max),
+            'c': (x_min + w * 0.5, y_min + h * 0.5, x_max, y_max),
+        }
+
+        # 3. Classify detected centroids
+        points = {name: [] for name in zones}
+        for x, y in digit_centroids:
+            for name, (zx, zy, zx2, zy2) in zones.items():
+                if zx <= x <= zx2 and zy <= y <= zy2:
+                    points[name].append((x, y))
+
+        # 4. Determine final point for each segment (centroid of detected points in zone)
+        final_points = {}
+        for name, plist in points.items():
+            if plist:
+                final_points[name] = (int(np.mean([p[0] for p in plist])), int(np.mean([p[1] for p in plist])))
+
+        # 5. Interpolate missing segments by using the center of their zone
+        for name, (zx, zy, zx2, zy2) in zones.items():
+            if name not in final_points:
+                final_points[name] = (int((zx + zx2) / 2), int((zy + zy2) / 2))
+
+        # 6. Return in standard order
+        ordered_segments = [final_points.get(s) for s in ['a','b','c','d','e','f','g']]
+        return [(p[1], p[0]) for p in ordered_segments]
+
+    ordered_left = interpolate_and_sort_segments(left_centroids)
+    ordered_right = interpolate_and_sort_segments(right_centroids)
+
     if ordered_left is None or ordered_right is None: return None
     return ordered_left + ordered_right
 
 def auto_calibrate(vs, args, search_limit=150):
-    print(f"Attempting auto-calibration by searching for '88' in the first {search_limit} frames...")
+    print(f"Attempting auto-calibration by searching for a valid display pattern in the first {search_limit} frames...")
     frame_count = 0
     while frame_count < search_limit:
         frame = vs.read()
