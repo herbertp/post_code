@@ -65,65 +65,76 @@ def get_segment_centroids(roi_for_calib):
     centroids = [ (int(cv2.moments(c)["m10"] / cv2.moments(c)["m00"]), int(cv2.moments(c)["m01"] / cv2.moments(c)["m00"])) for c in segment_contours if cv2.moments(c)["m00"] !=0]
     if len(centroids) < MIN_CONTOURS: return None
 
-    # Use K-Means clustering to separate the two digits
     points_np = np.float32(centroids)
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-    _, labels, centers = cv2.kmeans(points_np, 2, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
+    _, labels, _ = cv2.kmeans(points_np, 2, None, criteria, 10, cv2.KMEANS_RANDOM_CENTERS)
 
     group1 = [tuple(p) for i, p in enumerate(centroids) if labels[i] == 0]
     group2 = [tuple(p) for i, p in enumerate(centroids) if labels[i] == 1]
 
-    # Determine which group is left and which is right
-    mean_x1 = np.mean([p[0] for p in group1])
-    mean_x2 = np.mean([p[0] for p in group2])
+    mean_x1 = np.mean([p[0] for p in group1]) if group1 else 0
+    mean_x2 = np.mean([p[0] for p in group2]) if group2 else 0
 
-    if mean_x1 < mean_x2:
-        left_centroids, right_centroids = group1, group2
-    else:
-        left_centroids, right_centroids = group2, group1
+    left_centroids, right_centroids = (group1, group2) if mean_x1 < mean_x2 else (group2, group1)
 
     def interpolate_and_sort_segments(digit_centroids):
         if not (5 <= len(digit_centroids) <= 7): return None
 
-        # 1. Get Bounding Box
         x_coords = [p[0] for p in digit_centroids]
         y_coords = [p[1] for p in digit_centroids]
         x_min, x_max = min(x_coords), max(x_coords)
         y_min, y_max = min(y_coords), max(y_coords)
-        w, h = x_max - x_min, y_max - y_min
 
-        # 2. Define Zones for each segment
-        zones = {
-            'a': (x_min, y_min, x_max, y_min + h * 0.2),
-            'g': (x_min, y_min + h * 0.4, x_max, y_min + h * 0.6),
-            'd': (x_min, y_min + h * 0.8, x_max, y_max),
-            'f': (x_min, y_min, x_min + w * 0.5, y_min + h * 0.5),
-            'b': (x_min + w * 0.5, y_min, x_max, y_min + h * 0.5),
-            'e': (x_min, y_min + h * 0.5, x_min + w * 0.5, y_max),
-            'c': (x_min + w * 0.5, y_min + h * 0.5, x_max, y_max),
+        # Classify detected points by finding the nearest canonical zone
+        canonical_zones = {
+            'a': (x_min + (x_max-x_min)*0.5, y_min),
+            'b': (x_max, y_min + (y_max-y_min)*0.25),
+            'c': (x_max, y_min + (y_max-y_min)*0.75),
+            'd': (x_min + (x_max-x_min)*0.5, y_max),
+            'e': (x_min, y_min + (y_max-y_min)*0.75),
+            'f': (x_min, y_min + (y_max-y_min)*0.25),
+            'g': (x_min + (x_max-x_min)*0.5, y_min + (y_max-y_min)*0.5)
         }
 
-        # 3. Classify detected centroids
-        points = {name: [] for name in zones}
-        for x, y in digit_centroids:
-            for name, (zx, zy, zx2, zy2) in zones.items():
-                if zx <= x <= zx2 and zy <= y <= zy2:
-                    points[name].append((x, y))
+        points = {}
+        temp_centroids = list(digit_centroids)
+        for name, c_point in canonical_zones.items():
+            dists = [np.hypot(p[0]-c_point[0], p[1]-c_point[1]) for p in temp_centroids]
+            if not dists: continue
+            idx = np.argmin(dists)
+            # Heuristic: if the point is reasonably close to the zone center
+            if dists[idx] < (x_max - x_min) * 0.5:
+                points[name] = temp_centroids.pop(idx)
 
-        # 4. Determine final point for each segment (centroid of detected points in zone)
-        final_points = {}
-        for name, plist in points.items():
-            if plist:
-                final_points[name] = (int(np.mean([p[0] for p in plist])), int(np.mean([p[1] for p in plist])))
+        # If we have all 7 points, we can use the original reliable sorter logic
+        if len(points) == 7:
+            y_sorted = sorted(points.values(), key=lambda p: p[1])
+            top_row = sorted(y_sorted[:3], key=lambda p: p[0])
+            seg_f, seg_a, seg_b = top_row[0], top_row[1], top_row[2]
+            seg_g = y_sorted[3]
+            bot_row = sorted(y_sorted[4:], key=lambda p: p[0])
+            seg_e, seg_d, seg_c = bot_row[0], bot_row[1], bot_row[2]
+            return [(y,x) for x,y in [seg_a, seg_b, seg_c, seg_d, seg_e, seg_f, seg_g]]
 
-        # 5. Interpolate missing segments by using the center of their zone
-        for name, (zx, zy, zx2, zy2) in zones.items():
-            if name not in final_points:
-                final_points[name] = (int((zx + zx2) / 2), int((zy + zy2) / 2))
+        # Interpolate based on found points
+        # Pass 1: Horizontal anchors
+        if 'a' in points and 'd' in points and 'g' not in points:
+            points['g'] = (int((points['a'][0]+points['d'][0])/2), int((points['a'][1]+points['d'][1])/2))
 
-        # 6. Return in standard order
-        ordered_segments = [final_points.get(s) for s in ['a','b','c','d','e','f','g']]
-        return [(p[1], p[0]) for p in ordered_segments]
+        # Pass 2: Vertical segments based on horizontal
+        if 'a' in points and 'g' in points:
+            if 'f' not in points: points['f'] = (points.get('e', (x_min,0))[0], int((points['a'][1]+points['g'][1])/2))
+            if 'b' not in points: points['b'] = (points.get('c', (x_max,0))[0], int((points['a'][1]+points['g'][1])/2))
+        if 'd' in points and 'g' in points:
+            if 'e' not in points: points['e'] = (points.get('f', (x_min,0))[0], int((points['d'][1]+points['g'][1])/2))
+            if 'c' not in points: points['c'] = (points.get('b', (x_max,0))[0], int((points['d'][1]+points['g'][1])/2))
+
+        # Pass 3: Fill any remaining from canonical zones (fallback)
+        for name, p in canonical_zones.items():
+            if name not in points: points[name] = p
+
+        ordered_segments = [points.get(s) for s in ['a','b','c','d','e','f','g']]
+        return [(int(p[1]), int(p[0])) for p in ordered_segments]
 
     ordered_left = interpolate_and_sort_segments(left_centroids)
     ordered_right = interpolate_and_sort_segments(right_centroids)
