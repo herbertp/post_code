@@ -131,14 +131,22 @@ def load_decode_map(filepath):
         print(f"Warning: Decode file not found at '{filepath}'")
         return {}
 
-def main(args):
+def handle_hotkey(key, source, custom_args):
+    if key in custom_args['hotkeys']:
+        ctrl, step = custom_args['hotkeys'][key]
+        if ctrl in custom_args['set_ctrl']:
+            custom_args['set_ctrl'][ctrl] += step
+            print(f"Hotkey '{chr(key)}' pressed. Setting {ctrl}={custom_args['set_ctrl'][ctrl]}")
+            set_camera_properties_v4l2(source, [f"{ctrl}={custom_args['set_ctrl'][ctrl]}"])
+
+def main(args, custom_args):
     roi_props = parse_geometry(args.geometry)
     decode_map = load_decode_map(args.decode)
     vs = VideoStream(src=args.source, width=args.cam_width, height=args.cam_height, fps=args.fps, fourcc=args.format).start()
     time.sleep(1.0)
 
-    if isinstance(args.source, int) and args.set_ctrl:
-        set_camera_properties_v4l2(args.source, args.set_ctrl)
+    if isinstance(args.source, int) and custom_args['set_ctrl']:
+        set_camera_properties_v4l2(args.source, [f"{k}={v}" for k, v in custom_args['set_ctrl'].items()])
 
     state, roi_box, sample_points = 'AWAITING_CALIBRATION', None, None
 
@@ -220,7 +228,11 @@ def main(args):
                     all_points_np = np.array([[x,y] for y,x in points]); x_m, y_m, w_m, h_m = cv2.boundingRect(all_points_np)
                     roi_box, sample_points = (x_m, y_m, w_m, h_m), points; state = 'DECODING'; print("Calibration successful.")
                 else: print("Manual calibration failed.")
-            elif key == ord('s') and isinstance(args.source, int) and args.set_ctrl: set_camera_properties_v4l2(args.source, args.set_ctrl)
+            elif key == ord('s') and isinstance(args.source, int) and custom_args['set_ctrl']:
+                set_camera_properties_v4l2(args.source, [f"{k}={v}" for k, v in custom_args['set_ctrl'].items()])
+            else:
+                handle_hotkey(key, args.source, custom_args)
+
 
         elif args.debug:
             if frame_idx % 150 == 0:
@@ -231,20 +243,61 @@ def main(args):
     if args.visualize: cv2.destroyAllWindows()
     print("Decoder stopped.")
 
+KEY_MAP = {
+    'left': 81, 'right': 83, 'up': 82, 'down': 84,
+    'pageup': 73, 'pagedown': 81,
+    'home': 74, 'end': 78
+}
+
+def parse_args_custom(argv):
+    custom_args = {'set_ctrl': {}, 'hotkeys': {}}
+    remaining_args = []
+    last_ctrl = None
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ('-c', '--set-ctrl'):
+            if i + 1 < len(argv):
+                val = argv[i+1]
+                try:
+                    key, value = val.split('=', 1)
+                    custom_args['set_ctrl'][key] = int(value)
+                    last_ctrl = key
+                except ValueError:
+                    print(f"Warning: Invalid format for setting '{val}'. Use key=value.")
+                i += 1
+        elif arg in ('-k', '--hot-key'):
+            if i + 1 < len(argv) and last_ctrl:
+                val = argv[i+1]
+                try:
+                    key, value = val.split('=', 1)
+                    key_code = KEY_MAP.get(key.lower(), ord(key[0]))
+                    custom_args['hotkeys'][key_code] = (last_ctrl, int(value))
+                except (ValueError, IndexError):
+                    print(f"Warning: Invalid format for hotkey '{val}'. Use key=value.")
+                i += 1
+        else:
+            remaining_args.append(arg)
+        i += 1
+    return custom_args, remaining_args
+
+
 if __name__ == "__main__":
+    custom_args, remaining_argv = parse_args_custom(sys.argv[1:])
     parser = argparse.ArgumentParser(description="Decode 7-segment display from video file or camera.", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("source", help="Path to video file or camera index (e.g., 0).")
     parser.add_argument("--visualize", action="store_true", help="Enable live visualization of the decoding process.")
     parser.add_argument("--debug", action="store_true", help="Print periodic FPS to the console in non-visual mode.")
     parser.add_argument("--decode", type=str, default="", help="Path to a file with POST code descriptions (e.g., AA:Description).")
-    parser.add_argument("-c", "--set-ctrl", action="append", dest="set_ctrl", help="Set a camera property using v4l2-ctl. Use key=value format. Can be used multiple times.")
     parser.add_argument("--fps", type=int, help="Request a specific FPS from the camera.")
     parser.add_argument("--cam-width", type=int, help="Set camera frame width.")
     parser.add_argument("--cam-height", type=int, help="Set camera frame height.")
     parser.add_argument("--format", type=str, help="Set camera FOURCC format (e.g., MJPG).")
     parser.add_argument("--geometry", type=str, default="0.33x0.33@0.5,0.5", help="ROI geometry as WxH or WxH@(X,Y) in fractions of frame dimensions.")
     parser.add_argument("--stable", type=int, default=2, help="Number of stable frames required before reporting a new value.")
-    args = parser.parse_args()
-    try: args.source = int(args.source)
-    except ValueError: pass
-    main(args)
+    args = parser.parse_args(remaining_argv)
+    try:
+        args.source = int(args.source)
+    except ValueError:
+        pass
+    main(args, custom_args)
